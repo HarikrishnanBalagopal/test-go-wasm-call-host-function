@@ -20,20 +20,20 @@ class XtermStdio extends Fd {
     }
 }
 
-const ciovec_read_bytes = (view, ptr) => {
-    const iovec = { buf: -1, buf_len: -1 };
-    iovec.buf = view.getUint32(ptr, true);
-    iovec.buf_len = view.getUint32(ptr + 4, true);
-    return iovec;
-};
+// const ciovec_read_bytes = (view, ptr) => {
+//     const iovec = { buf: -1, buf_len: -1 };
+//     iovec.buf = view.getUint32(ptr, true);
+//     iovec.buf_len = view.getUint32(ptr + 4, true);
+//     return iovec;
+// };
 
-const ciovec_read_bytes_array = (view, ptr, len) => {
-    const iovecs = [];
-    for (let i = 0; i < len; i++) {
-        iovecs.push(ciovec_read_bytes(view, ptr + 8 * i));
-    }
-    return iovecs;
-};
+// const ciovec_read_bytes_array = (view, ptr, len) => {
+//     const iovecs = [];
+//     for (let i = 0; i < len; i++) {
+//         iovecs.push(ciovec_read_bytes(view, ptr + 8 * i));
+//     }
+//     return iovecs;
+// };
 
 const main = async () => {
     console.log('main start');
@@ -42,12 +42,10 @@ const main = async () => {
     const wasmBytes = await res.arrayBuffer();
     const wasmModule = await WebAssembly.compile(wasmBytes);
     console.log('wasmModule', wasmModule);
-    let fibWasmBytes = null;
-    {
-        const res = await fetch('fib.wasm');
-        if (!res.ok) throw new Error('failed to fetch fib.wasm');
-        fibWasmBytes = await res.arrayBuffer();
-    }
+    const fibRes = await fetch('fib.wasm');
+    if (!fibRes.ok) throw new Error('failed to fetch fib.wasm');
+    const fibWasmBytes = await fibRes.arrayBuffer();
+
     // const importObject = {};
     // const wasmModuleInstance = await WebAssembly.instantiate(wasmModule, importObject);
     // console.log('wasmModuleInstance', wasmModuleInstance);
@@ -62,6 +60,7 @@ const main = async () => {
         new PreopenDirectory(".", {
             "example.c": new File(new TextEncoder("utf-8").encode(`#include "a"`)),
             "hello.rs": new File(new TextEncoder("utf-8").encode(`fn main() { println!("Hello World!"); }`)),
+            "fib.wasm": new File(new Uint8Array(fibWasmBytes)),
         }),
     ];
     const wasi = new WASI(args, env, fds);
@@ -73,9 +72,10 @@ const main = async () => {
         const buf = memory.slice(ptr, ptr + len);
         const decoder = new TextDecoder('utf-8');
         const s = decoder.decode(buf);
-        // console.log('load_wasm_module called with:', s);
         return s;
     };
+    let NEW_MODULE_ID = 41;
+    const MODULE_MAP = {};
     const load_wasm_module = (wasmModulePathPtr, wasmModulePathLength) => {
         const s = load_string(wasmModulePathPtr, wasmModulePathLength);
         console.log('load_wasm_module called with:', s);
@@ -89,12 +89,16 @@ const main = async () => {
         // https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Instance/Instance
         const instance = new WebAssembly.Instance(myModule, importObject);
         console.log('compiled wasm and made an instance:', instance);
-        return 42;
+        const new_key = ++NEW_MODULE_ID;
+        MODULE_MAP[new_key] = instance;
+        return new_key;
     };
     const run_transform = (wasmModuleId, inputJsonPtr, inputJsonLength) => {
+        if(!(wasmModuleId in MODULE_MAP)) throw new Error('wasm module not loaded');
+        const wasmModule = MODULE_MAP[wasmModuleId];
         const s = load_string(inputJsonPtr, inputJsonLength);
         const input = JSON.parse(s);
-        console.log('run_transform called with: wasmModuleId:', wasmModuleId, 's:', s, 'input:', input);
+        console.log('run_transform called with: wasmModuleId:', wasmModuleId, 'wasmModule', wasmModule, 's:', s, 'input:', input);
         return 0;
     };
     const importObject = {
