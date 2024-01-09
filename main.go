@@ -51,7 +51,7 @@ func runTransform(moduleId int32, input TransformInput) error {
 
 func main() {
 	fmt.Println("start")
-	customTransformerWasmPath := "/a/b/c/custom-transformer.wasm"
+	customTransformerWasmPath := "/customizations/my-custom-transformer-1/my-transformer.wasm"
 	moduleId, err := loadWasmModule(customTransformerWasmPath)
 	if err != nil {
 		panic(err)

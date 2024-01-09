@@ -60,7 +60,11 @@ const main = async () => {
         new PreopenDirectory(".", {
             "example.c": new File(new TextEncoder("utf-8").encode(`#include "a"`)),
             "hello.rs": new File(new TextEncoder("utf-8").encode(`fn main() { println!("Hello World!"); }`)),
-            "fib.wasm": new File(new Uint8Array(fibWasmBytes)),
+            "customizations": new PreopenDirectory("customizations", {
+                "my-custom-transformer-1": new PreopenDirectory("my-custom-transformer-1", {
+                    "my-transformer.wasm": new File(new Uint8Array(fibWasmBytes)),
+                }),
+            }),
         }),
     ];
     const wasi = new WASI(args, env, fds);
@@ -77,10 +81,25 @@ const main = async () => {
     let NEW_MODULE_ID = 41;
     const MODULE_MAP = {};
     const load_wasm_module = (wasmModulePathPtr, wasmModulePathLength) => {
-        const s = load_string(wasmModulePathPtr, wasmModulePathLength);
-        console.log('load_wasm_module called with:', s);
+        const wasmModulePath = load_string(wasmModulePathPtr, wasmModulePathLength);
+        console.log('load_wasm_module called with path:', wasmModulePath);
+        let currDirectoryOrFile = fds[3].dir.contents;
+        wasmModulePath.split('/').forEach(p => {
+            if (p === '') return;
+            console.log('looking for folder/file', p);
+            if (!(p in currDirectoryOrFile)) throw new Error('load_wasm_module: failed to find the wasm module');
+            console.log('before currDirectoryOrFile', currDirectoryOrFile, typeof currDirectoryOrFile);
+            currDirectoryOrFile = currDirectoryOrFile[p];
+            if (currDirectoryOrFile instanceof PreopenDirectory) {
+                currDirectoryOrFile = currDirectoryOrFile.dir.contents;
+            }
+            console.log('after currDirectoryOrFile', currDirectoryOrFile);
+        });
+        if (!(currDirectoryOrFile instanceof File)) throw new Error('load_wasm_module: the given path is not a file');
+        const wasmModuleBytes = currDirectoryOrFile.data;
+        console.log('load_wasm_module: wasmModuleBytes', wasmModuleBytes);
         // https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Module/Module
-        const myModule = new WebAssembly.Module(fibWasmBytes);
+        const myModule = new WebAssembly.Module(wasmModuleBytes);
         const importObject = {
             'console': {
                 'log': console.log
@@ -94,7 +113,7 @@ const main = async () => {
         return new_key;
     };
     const run_transform = (wasmModuleId, inputJsonPtr, inputJsonLength) => {
-        if(!(wasmModuleId in MODULE_MAP)) throw new Error('wasm module not loaded');
+        if (!(wasmModuleId in MODULE_MAP)) throw new Error('wasm module not loaded');
         const wasmModule = MODULE_MAP[wasmModuleId];
         const s = load_string(inputJsonPtr, inputJsonLength);
         const input = JSON.parse(s);
