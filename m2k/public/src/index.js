@@ -45,7 +45,9 @@ const main = async () => {
     const fibRes = await fetch('fib.wasm');
     if (!fibRes.ok) throw new Error('failed to fetch fib.wasm');
     const fibWasmBytes = await fibRes.arrayBuffer();
-
+    const mainTinyRes = await fetch('maintiny.wasm');
+    if (!mainTinyRes.ok) throw new Error('failed to fetch fib.wasm');
+    const mainTinyBytes = await mainTinyRes.arrayBuffer();
     // const importObject = {};
     // const wasmModuleInstance = await WebAssembly.instantiate(wasmModule, importObject);
     // console.log('wasmModuleInstance', wasmModuleInstance);
@@ -62,7 +64,9 @@ const main = async () => {
             "hello.rs": new File(new TextEncoder("utf-8").encode(`fn main() { println!("Hello World!"); }`)),
             "customizations": new PreopenDirectory("customizations", {
                 "my-custom-transformer-1": new PreopenDirectory("my-custom-transformer-1", {
-                    "my-transformer.wasm": new File(new Uint8Array(fibWasmBytes)),
+                    // "my-transformer.wasm": new File(new Uint8Array(fibWasmBytes)),
+                    "fib.wasm": new File(new Uint8Array(fibWasmBytes)),
+                    "my-transformer.wasm": new File(new Uint8Array(mainTinyBytes)),
                 }),
             }),
         }),
@@ -76,7 +80,7 @@ const main = async () => {
         const buf = memory.slice(ptr, ptr + len);
         const decoder = new TextDecoder('utf-8');
         const s = decoder.decode(buf);
-        return s;
+        return { buf, s };
     };
     let NEW_MODULE_ID = 41;
     const MODULE_MAP = {};
@@ -100,14 +104,17 @@ const main = async () => {
         console.log('load_wasm_module: wasmModuleBytes', wasmModuleBytes);
         // https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Module/Module
         const myModule = new WebAssembly.Module(wasmModuleBytes);
+        // const importObject = {
+        //     'console': {
+        //         'log': console.log
+        //     }
+        // };
         const importObject = {
-            'console': {
-                'log': console.log
-            }
+            "wasi_snapshot_preview1": wasi.wasiImport,
         };
         // https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Instance/Instance
         const instance = new WebAssembly.Instance(myModule, importObject);
-        console.log('compiled wasm and made an instance:', instance);
+        console.log('load_wasm_module: compiled wasm and made an instance:', instance);
         const new_key = ++NEW_MODULE_ID;
         MODULE_MAP[new_key] = instance;
         return new_key;
@@ -115,9 +122,19 @@ const main = async () => {
     const run_transform = (wasmModuleId, inputJsonPtr, inputJsonLength) => {
         if (!(wasmModuleId in MODULE_MAP)) throw new Error('wasm module not loaded');
         const wasmModule = MODULE_MAP[wasmModuleId];
-        const s = load_string(inputJsonPtr, inputJsonLength);
+        const { buf, s } = load_string(inputJsonPtr, inputJsonLength);
+        console.log('run_transform: load_string buf', buf, 's', s);
         const input = JSON.parse(s);
         console.log('run_transform called with: wasmModuleId:', wasmModuleId, 'wasmModule', wasmModule, 's:', s, 'input:', input);
+        console.log('wasmModule.exports.myAllocate', wasmModule.exports.myAllocate);
+        console.log('wasmModule.exports.RunTransform', wasmModule.exports.RunTransform);
+        const len = s.length;
+        console.log('run_transform: allocate some memory of size', len);
+        const ptr = wasmModule.exports.myAllocate(len);
+        console.log('run_transform: ptr', ptr, 'len', len);
+        if (ptr < 0) throw new Error('failed to allocate, invalid pointer into memory');
+        memory.set(buf, ptr);
+        console.log('run_transform: json input set at ptr', ptr);
         return 0;
     };
     const importObject = {
