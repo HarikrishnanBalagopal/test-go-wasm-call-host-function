@@ -15,6 +15,7 @@ module.exports = {
             patterns: [
                 { from: "main.wasm", to: "main.wasm" },
                 { from: "fib.wasm", to: "fib.wasm" },
+                { from: "maintiny.wasm", to: "maintiny.wasm" },
             ],
         }),
     ],

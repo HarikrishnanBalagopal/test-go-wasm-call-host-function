@@ -75,17 +75,22 @@ const main = async () => {
 
     let WASM_INSTANCE = null;
     const load_string = (ptr, len) => {
-        if (!WASM_INSTANCE) throw new Error('the wasm instance is missing');
+        if (!WASM_INSTANCE) throw new Error('load_string: the wasm instance is missing');
         const memory = new Uint8Array(WASM_INSTANCE.exports.memory.buffer);
         const buf = memory.slice(ptr, ptr + len);
         const decoder = new TextDecoder('utf-8');
         const s = decoder.decode(buf);
         return { buf, s };
     };
+    const store_bytes = (bytes, ptr) => {
+        if (!WASM_INSTANCE) throw new Error('store_bytes: the wasm instance is missing');
+        const memory = new Uint8Array(WASM_INSTANCE.exports.memory.buffer);
+        memory.set(bytes, ptr);
+    };
     let NEW_MODULE_ID = 41;
     const MODULE_MAP = {};
     const load_wasm_module = (wasmModulePathPtr, wasmModulePathLength) => {
-        const wasmModulePath = load_string(wasmModulePathPtr, wasmModulePathLength);
+        const { s: wasmModulePath } = load_string(wasmModulePathPtr, wasmModulePathLength);
         console.log('load_wasm_module called with path:', wasmModulePath);
         let currDirectoryOrFile = fds[3].dir.contents;
         wasmModulePath.split('/').forEach(p => {
@@ -119,7 +124,7 @@ const main = async () => {
         MODULE_MAP[new_key] = instance;
         return new_key;
     };
-    const run_transform = (wasmModuleId, inputJsonPtr, inputJsonLength) => {
+    const run_transform = (wasmModuleId, inputJsonPtr, inputJsonLength, outputJsonPtr) => {
         if (!(wasmModuleId in MODULE_MAP)) throw new Error('wasm module not loaded');
         const wasmModule = MODULE_MAP[wasmModuleId];
         const { buf, s } = load_string(inputJsonPtr, inputJsonLength);
@@ -133,9 +138,32 @@ const main = async () => {
         const ptr = wasmModule.exports.myAllocate(len);
         console.log('run_transform: ptr', ptr, 'len', len);
         if (ptr < 0) throw new Error('failed to allocate, invalid pointer into memory');
+        let memory = new Uint8Array(wasmModule.exports.memory.buffer);
         memory.set(buf, ptr);
         console.log('run_transform: json input set at ptr', ptr);
-        return 0;
+
+        console.log('run_transform: allocate space for the output pointers');
+        const ptrptr = wasmModule.exports.myAllocate(8); // 2 uint32 values
+        console.log('run_transform: ptrptr', ptrptr);
+        if (ptrptr < 0) throw new Error('failed to allocate, invalid pointer into memory');
+
+        const result = wasmModule.exports.RunTransform(ptr, len, ptrptr, ptrptr + 4);
+        console.log('run_transform: transformation result', result);
+        if (result < 0) throw new Error('run_transform: transformation failed');
+        const outJsonPtr = new DataView(wasmModule.exports.memory.buffer, ptrptr, 4).getUint32(0, true);
+        const outJsonLen = new DataView(wasmModule.exports.memory.buffer, ptrptr + 4, 4).getUint32(0, true);
+        console.log('run_transform: transformation outJsonPtr', outJsonPtr, 'outJsonLen', outJsonLen);
+        memory = new Uint8Array(wasmModule.exports.memory.buffer);
+        console.log('run_transform: memory', memory);
+        const outJsonBytes = memory.slice(outJsonPtr, outJsonPtr + outJsonLen);
+        console.log('run_transform: outJsonBytes', outJsonBytes);
+        const outJson = new TextDecoder('utf-8').decode(outJsonBytes);
+        console.log('run_transform: outJson', outJson);
+        const outJsonParsed = JSON.parse(outJson);
+        console.log('run_transform: outJsonParsed', outJsonParsed);
+        store_bytes(outJsonBytes, outputJsonPtr);
+        // return 0;
+        return outJsonBytes.length;
     };
     const importObject = {
         "wasi_snapshot_preview1": wasi.wasiImport,
